@@ -25,6 +25,17 @@ bool Parser::expect(const char &&c) {
   return true;
 }
 
+bool Parser::expect(const std::string &&str) {
+  auto cursor = iter;
+  for (auto &c : str) {
+    if (cursor == input.end() || c != *cursor) {
+      return false;
+    }
+    ++cursor;
+  }
+  return true;
+}
+
 Expr Parser::parse_number() {
   trim();
 
@@ -147,6 +158,13 @@ Expr Parser::parse_atom() {
 
   try {
     return parse_number();
+  } catch (ParserError &e) {
+    if (e != ParserError::FailTry)
+      throw e;
+  }
+
+  try {
+    return parse_match();
   } catch (ParserError &e) {
     if (e != ParserError::FailTry)
       throw e;
@@ -293,6 +311,17 @@ void print_expr(const Expr &e) {
           std::cout << ")";
         } else if constexpr (std::is_same_v<T, ExprOperation>) {
           print_binop(arg);
+        } else if constexpr (std::is_same_v<T, ExprMatch>) {
+          std::cout << "(match ";
+          print_expr(*arg.value);
+          for (auto branch : arg.branches) {
+            std::cout << " (";
+            print_expr(*branch.pattern);
+            std::cout << " -> ";
+            print_expr(*branch.value);
+            std::cout << ")";
+          }
+          std::cout << ")";
         }
       },
       e);
@@ -373,18 +402,21 @@ Expr Parser::parse_fndecl() {
   }
   trim();
   auto name = std::get<ExprSymbol>(parse_symbol());
+  trim();
+  if (!expect('('))
+    throw ParserError::UnclosedParens;
   auto close = find_braces('(', ')');
   if (close == input.end()) {
     throw ParserError::UnclosedParens;
   }
   ++iter;
-  std::map<std::string, std::string> args;
+  std::vector<std::pair<std::string, std::string>> args;
   while (iter != close) {
     trim();
     auto arg = std::get<ExprSymbol>(parse_symbol());
     trim();
     auto type = std::get<ExprSymbol>(parse_symbol());
-    args.insert({arg.value, type.value});
+    args.push_back(std::make_pair(arg.value, type.value));
     trim();
     if (!expect(',')) {
       break;
@@ -396,12 +428,9 @@ Expr Parser::parse_fndecl() {
   }
   ++iter;
   trim();
-  if (!expect('-'))
+  if (!expect("->"))
     throw ParserError::ExpectedReturn;
-  ++iter;
-  if (!expect('>'))
-    throw ParserError::ExpectedReturn;
-  ++iter;
+  iter += 2;
   trim();
   auto ret = std::get<ExprSymbol>(parse_symbol());
   trim();
@@ -419,4 +448,59 @@ Expr Parser::parse_fndecl() {
                     .args = std::move(args),
                     .ret_type = ret.value,
                     .body = std::make_shared<Expr>(body)};
+}
+
+MatchBranch Parser::parse_branch() {
+  trim();
+  auto pattern = parse_atom();
+  trim();
+  if (!expect("->"))
+    throw ParserError::ExpectedReturn;
+  iter += 2;
+  trim();
+  if (!expect('{'))
+    throw ParserError::ExpectedBlock;
+  ++iter;
+  trim();
+  auto expr = parse_expr();
+  trim();
+  if (!expect('}'))
+    throw ParserError::ExpectedBlock;
+  ++iter;
+  return MatchBranch{.pattern = std::make_shared<Expr>(pattern),
+                     .value = std::make_shared<Expr>(expr)};
+}
+
+Expr Parser::parse_match() {
+  auto bkup = iter;
+  auto kwmatch = std::get<ExprSymbol>(parse_symbol());
+  if (kwmatch.value != "match") {
+    iter = bkup;
+    throw ParserError::FailTry;
+  }
+  trim();
+  auto expr = parse_expr();
+  trim();
+  if (!expect('{'))
+    throw ParserError::ExpectedBlock;
+  auto close = find_braces('{', '}');
+  if (close == input.end())
+    throw ParserError::UnclosedCurlies;
+  ++iter;
+  std::vector<MatchBranch> branches{};
+  while (iter != close) {
+    trim();
+    branches.push_back(parse_branch());
+    trim();
+    if (!expect(','))
+      break;
+    ++iter;
+  }
+  trim();
+  if (iter != close) {
+    throw ParserError::UnknownExpression;
+  }
+  ++iter;
+  return ExprMatch{.value = std::make_shared<Expr>(expr),
+                   .branches = std::move(branches)};
 }

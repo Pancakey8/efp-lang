@@ -20,11 +20,12 @@ struct ExprSymbol {
 struct ExprOperation;
 struct ExprFnCall;
 struct ExprFnDecl;
+struct ExprMatch;
 
 enum class Operator { Add, Sub, Mul, Div };
 
 using Expr = std::variant<ExprNumber, ExprString, ExprSymbol, ExprFnCall,
-                          ExprOperation, ExprFnDecl>;
+                          ExprOperation, ExprFnDecl, ExprMatch>;
 
 struct ExprOperation {
   std::shared_ptr<Expr> left;
@@ -39,9 +40,19 @@ struct ExprFnCall {
 
 struct ExprFnDecl {
   std::string name;
-  std::map<std::string, std::string> args; // name : type
+  std::vector<std::pair<std::string, std::string>> args; // name : type
   std::string ret_type;
   std::shared_ptr<Expr> body;
+};
+
+struct MatchBranch {
+  std::shared_ptr<Expr> pattern;
+  std::shared_ptr<Expr> value;
+};
+
+struct ExprMatch {
+  std::shared_ptr<Expr> value;
+  std::vector<MatchBranch> branches;
 };
 
 enum class ParserError {
@@ -60,6 +71,7 @@ class Parser {
 
   bool expect(const std::function<bool(char)> &&fn);
   bool expect(const char &&c);
+  bool expect(const std::string &&str);
   void trim();
 
   std::string::iterator find_braces(const char &&left, const char &&right);
@@ -72,6 +84,8 @@ class Parser {
   Expr parse_symbol();
   Expr parse_fncall();
   Expr parse_fndecl();
+  MatchBranch parse_branch();
+  Expr parse_match();
   Expr parse_atom();
   Expr parse_expr();
 
